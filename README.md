@@ -7,7 +7,7 @@ The browser never calls Render directly. Vercel proxies `/api/*` to this service
 ## Deploy on Render
 
 1. Push this repo, then in Render choose **New** → **Blueprint** and point it at this repository. `render.yaml` creates a web service and a dispatch cron.
-2. Use a plan that does not spin down. A sleeping instance misses the 15-minute send window and drops SMTP connections.
+2. The free web service stays awake on its own. While the process is running it pings `https://<render-host>/api/health/live` every 5 minutes, which resets Render's 15-minute idle timer. One always-on service fits in the free 750 hours per month. The first request after a new deploy still cold-starts; after that the ping holds it open.
 3. Fill every environment variable Render marks as required. Copy the names from `.env.example`. Do not commit values.
 4. `AUTH_SECRET` must be the same string you set on Vercel.
 5. After the first deploy, set `APP_URL` to the Render URL (for example `https://emailautomation-backend.onrender.com`) and redeploy. Unsubscribe links in sent mail use that origin.
