@@ -1,0 +1,64 @@
+services:
+  - type: web
+    name: emailautomation-backend
+    runtime: node
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health/live
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: NEXT_PUBLIC_OPERATOR_TIMEZONE
+        sync: false
+      - key: MAILGUN_API_KEY
+        sync: false
+      - key: MAILGUN_DOMAIN
+        sync: false
+      - key: MAILGUN_FROM
+        sync: false
+      - key: MAILGUN_BASE_URL
+        sync: false
+      - key: MAILGUN_WEBHOOK_SIGNING_KEY
+        sync: false
+      - key: DEFAULT_SENDER_NAME
+        sync: false
+      - key: DEFAULT_SENDER_TITLE
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+
+  - type: cron
+    name: emailautomation-dispatch
+    runtime: node
+    region: frankfurt
+    schedule: "*/15 * * * *"
+    buildCommand: node -e "process.exit(0)"
+    startCommand: node scripts/cron-tick.mjs
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: BACKEND_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
