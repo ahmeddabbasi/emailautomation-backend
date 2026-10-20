@@ -1,0 +1,16 @@
+[Unit]
+Description=Email Automation API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/emailautomation-backend
+EnvironmentFile=/etc/emailautomation.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/local/bin/npm start -- -H 127.0.0.1 -p 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

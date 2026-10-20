@@ -1,6 +1,6 @@
 # Email Automation API
 
-This repository is the backend. Deploy it on Render. The dashboard lives in [emailautomation-frontend](https://github.com/ahmeddabbasi/emailautomation-frontend) and is deployed on Vercel.
+This repository is the backend. Deploy it on EC2 with `deploy/ec2/setup.sh`. The dashboard lives in [emailautomation-frontend](https://github.com/ahmeddabbasi/emailautomation-frontend) and is deployed on Vercel.
 
 The browser never calls Render directly. Vercel proxies `/api/*` to this service and keeps the session cookie on the Vercel host. Supabase, Mailgun, Gemini, and mailbox passwords stay in this service only.
 
