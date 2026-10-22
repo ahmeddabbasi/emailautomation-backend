@@ -10,6 +10,8 @@ import {
 } from "../src/lib/import-limits.ts";
 import { limitError, pickMailbox, remainingCapacity, routeCampaignSend, type MailboxCapacity } from "../src/lib/mailbox-capacity.ts";
 import { htmlToPlainText, renderTemplate, sanitizeEmailHtml } from "../src/lib/template-render.ts";
+import { alignedMailboxAddress } from "../src/lib/mailbox-address.ts";
+import { isPublicHttpsUrl } from "../src/lib/public-url.ts";
 import { decryptSecret, encryptSecret } from "../src/lib/secret-box.ts";
 
 test("csv validation trims, lowercases, and rejects bad emails", () => {
@@ -82,6 +84,21 @@ test("template variables, fallbacks, and html sanitizing", () => {
   assert.equal(clean.includes("script"), false);
   assert.equal(clean.includes("onclick"), false);
   assert.match(htmlToPlainText("<p>Hello<br>there</p>"), /Hello/);
+});
+
+test("unsubscribe headers require a public https origin", () => {
+  assert.equal(isPublicHttpsUrl("http://localhost:3000"), false);
+  assert.equal(isPublicHttpsUrl("https://localhost/api/unsubscribe"), false);
+  assert.equal(isPublicHttpsUrl("https://127.0.0.1/api/unsubscribe"), false);
+  assert.equal(isPublicHttpsUrl("https://192.168.1.8"), false);
+  assert.equal(isPublicHttpsUrl("https://app.vectoriseinc.dev"), true);
+  assert.equal(isPublicHttpsUrl(""), false);
+});
+
+test("mailbox from address stays on the authenticated Zoho domain", () => {
+  assert.equal(alignedMailboxAddress("sales@vectoriseinc.dev", "sales@vectoriseinc.dev"), "sales@vectoriseinc.dev");
+  assert.equal(alignedMailboxAddress("sales@vectoriseinc.dev", "alias@vectoriseinc.dev"), "alias@vectoriseinc.dev");
+  assert.equal(alignedMailboxAddress("sales@vectoriseinc.dev", "sales@mailgun.test"), "sales@vectoriseinc.dev");
 });
 
 test("mailbox passwords round-trip and are not stored in clear text", () => {

@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { generateEmail, validateGeneratedEmail, resolveSenderIdentity } from "@/lib/generation";
 import { sendEmail } from "@/lib/sending";
 import { chooseCampaignMailbox, sendWithMailbox } from "@/lib/mailboxes";
+import { isPublicHttpsUrl } from "@/lib/public-url";
 import { isSuppressed, unsubscribeUrl } from "@/lib/suppression";
 import { htmlToPlainText, renderTemplate, sanitizeEmailHtml, templateVariables } from "@/lib/template-render";
 import { advancePendingImports } from "@/lib/import-jobs";
@@ -417,8 +418,9 @@ async function processOne(
     return;
   }
 
-  const listUnsubscribe = unsubscribeUrl(process.env.APP_URL || "http://localhost:3000", contact.email);
-  if (html) {
+  const appUrl = process.env.APP_URL;
+  const listUnsubscribe = appUrl && isPublicHttpsUrl(appUrl) ? unsubscribeUrl(appUrl, contact.email) : undefined;
+  if (html && listUnsubscribe) {
     html += `<p style="margin-top:24px;font-size:12px;"><a href="${listUnsubscribe}">Unsubscribe</a></p>`;
     body += `\n\nUnsubscribe: ${listUnsubscribe}`;
   }

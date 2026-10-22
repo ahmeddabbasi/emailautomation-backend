@@ -1,5 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
+import { alignedMailboxAddress } from "./mailbox-address";
+import { isPublicHttpsUrl } from "./public-url";
 
 export type SmtpSecurity = "ssl" | "starttls";
 
@@ -36,15 +38,18 @@ export async function verifySmtp(config: SmtpConfig): Promise<void> {
 }
 
 export async function sendSmtp(config: SmtpConfig, message: OutboundMessage): Promise<string> {
+  const fromEmail = alignedMailboxAddress(config.username, message.fromEmail);
+  const unsubscribe = message.listUnsubscribe && isPublicHttpsUrl(message.listUnsubscribe) ? message.listUnsubscribe : undefined;
   const info = await transport(config).sendMail({
-    from: `"${message.fromName.replace(/"/g, "")}" <${message.fromEmail}>`,
+    from: `"${message.fromName.replace(/"/g, "")}" <${fromEmail}>`,
+    envelope: { from: config.username.trim(), to: message.to },
     to: message.to,
     subject: message.subject,
     text: message.text,
     html: message.html,
     replyTo: message.replyTo || undefined,
-    headers: message.listUnsubscribe
-      ? { "List-Unsubscribe": `<${message.listUnsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
+    headers: unsubscribe
+      ? { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
       : undefined,
   });
   return info.messageId || "unknown";
