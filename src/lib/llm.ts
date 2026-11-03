@@ -2,6 +2,8 @@ import "server-only";
 import { GoogleGenAI, Type } from "@google/genai";
 import { env } from "@/lib/env";
 import { resolveGeminiApiKey } from "@/lib/gemini-settings";
+import { resolveOpenAiApiKey, writerPreference } from "@/lib/openai-settings";
+import { classifyOpenAiFailure, friendlyOpenAiMessage, parseDraftContent, type OpenAiFailure } from "@/lib/openai";
 import { ExternalServiceError, alreadyLogged, errorMessage } from "@/lib/errors";
 import { logError, logWarning } from "@/lib/logger";
 import type { GenerationProvider } from "@/lib/supabase/db-types";
@@ -269,7 +271,7 @@ async function callGroq(prompt: string, mode: "email" | "text"): Promise<string>
 function failureDetails(err: ProviderError, ctx: LlmContext, attempt: number, maxAttempts: number) {
   return {
     provider: err.provider,
-    model: err.provider === "gemini" ? env.geminiModel : env.groqModel,
+    model: err.provider === "gemini" ? env.geminiModel : err.provider === "openai" ? env.openaiModel : env.groqModel,
     httpStatus: err.httpStatus ?? null,
     providerBody: err.providerBody ?? null,
     attempt,
@@ -278,7 +280,7 @@ function failureDetails(err: ProviderError, ctx: LlmContext, attempt: number, ma
   };
 }
 
-const PROVIDER_NAME: Record<GenerationProvider, string> = { gemini: "Gemini", groq: "Groq" };
+const PROVIDER_NAME: Record<GenerationProvider, string> = { gemini: "Gemini", groq: "Groq", openai: "OpenAI" };
 
 // Runs one provider with retry/backoff on transient failures. Every failed
 // attempt is logged as a warning; the caller decides whether the final
@@ -309,7 +311,81 @@ async function withRetries(
   throw last;
 }
 
+function openAiKind(failure: OpenAiFailure): FailureKind {
+  if (failure === "quota" || failure === "rate_limit") return "rate_limit";
+  if (failure === "timeout") return "deadline";
+  if (failure === "invalid_key") return "auth";
+  if (failure === "network" || failure === "unavailable") return "unavailable";
+  return "bad_response";
+}
+
+async function callOpenAi(prompt: string, mode: "email" | "text"): Promise<string> {
+  const apiKey = await resolveOpenAiApiKey();
+  if (!apiKey) throw new ProviderError("openai", "auth", "No OpenAI key is saved.");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: env.openaiModel,
+        temperature: mode === "email" ? 0.8 : 0.3,
+        max_tokens: mode === "email" ? 900 : 2000,
+        ...(mode === "email" ? { response_format: { type: "json_object" } } : {}),
+        messages: [
+          {
+            role: "system",
+            content: mode === "email"
+              ? "Return only JSON with keys subject and body. Use only facts in the user message."
+              : "Follow the user message. Do not invent facts.",
+          },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    if (!response.ok) {
+      const failure = classifyOpenAiFailure({ status: response.status, body: raw });
+      throw new ProviderError("openai", openAiKind(failure), friendlyOpenAiMessage(failure), response.status);
+    }
+    let content = "";
+    try {
+      const parsed = JSON.parse(raw) as { choices?: Array<{ message?: { content?: unknown } }> };
+      const value = parsed.choices?.[0]?.message?.content;
+      content = typeof value === "string" ? value.trim() : "";
+    } catch {
+      throw new ProviderError("openai", "bad_response", friendlyOpenAiMessage("bad_response"), response.status);
+    }
+    if (!content) throw new ProviderError("openai", "bad_response", friendlyOpenAiMessage("bad_response"), response.status);
+    if (mode === "text") return content;
+    const draft = parseDraftContent(content);
+    if (!draft) throw new ProviderError("openai", "bad_response", friendlyOpenAiMessage("bad_response"), response.status);
+    return JSON.stringify(draft);
+  } catch (err) {
+    if (err instanceof ProviderError) throw err;
+    if (err instanceof Error && err.name === "AbortError") throw new ProviderError("openai", "deadline", friendlyOpenAiMessage("timeout"));
+    throw new ProviderError("openai", "unavailable", friendlyOpenAiMessage("network"));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function complete(prompt: string, mode: "email" | "text", ctx: LlmContext): Promise<{ text: string; provider: GenerationProvider }> {
+  if ((await writerPreference()) === "openai") {
+    try {
+      return { text: await withRetries("openai", () => callOpenAi(prompt, mode), ctx), provider: "openai" };
+    } catch (err) {
+      const openAiErr = err instanceof ProviderError ? err : new ProviderError("openai", "other", errorMessage(err));
+      await logError("generation", `OPENAI_${KIND_CODE[openAiErr.kind]}`, openAiErr.message, {
+        error: openAiErr,
+        details: failureDetails(openAiErr, ctx, (openAiErr as ProviderError & { attempt?: number }).attempt ?? MAX_ATTEMPTS, MAX_ATTEMPTS),
+      });
+      throw alreadyLogged(new ExternalServiceError("openai", openAiErr.message, openAiErr));
+    }
+  }
+
   const geminiCoolingDown = Date.now() < geminiCooldownUntil;
 
   if (geminiCoolingDown && groqConfigured()) {

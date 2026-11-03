@@ -101,6 +101,7 @@ Fill in the required values:
 
 *Optional fallbacks:*
 - `GROQ_API_KEY` & `GROQ_MODEL`: Set if you want automated backup generation when Gemini is unavailable.
+- `OPENAI_API_KEY` & `OPENAI_MODEL`: Optional. Settings can store an encrypted OpenAI key and switch new drafts to OpenAI when Gemini or Groq is limited. `OPENAI_MODEL` defaults to `gpt-4o-mini`. Apply `supabase/migrations/20261104120000_openai_key.sql` and `supabase/migrations/20261104130000_writer_preference.sql` (`npm run db:push`) before saving a key. To reverse the preference column: `alter table app_settings drop constraint if exists app_settings_writer_preference_check; alter table app_settings drop column if exists writer_preference;`
 
 ### 2. Database Migration Setup
 Initialize your database tables and storage buckets:

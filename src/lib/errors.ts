@@ -4,7 +4,7 @@ export class ExternalServiceError extends Error {
   public logged = false;
 
   constructor(
-    public readonly service: "supabase" | "gemini" | "groq" | "mailgun",
+    public readonly service: "supabase" | "gemini" | "groq" | "mailgun" | "openai",
     message: string,
     public readonly cause?: unknown
   ) {

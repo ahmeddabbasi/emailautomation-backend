@@ -98,7 +98,7 @@ export interface SendLog {
   body: string | null;
   errorMessage: string | null;
   deliveryFailedAt: string | null;
-  provider: "gemini" | "groq" | null;
+  provider: "gemini" | "groq" | "openai" | null;
   testMode: boolean;
   isTest: boolean;
   createdAt: string;

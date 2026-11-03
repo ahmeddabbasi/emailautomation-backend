@@ -14,7 +14,7 @@ export type CampaignContactStatus =
 export type ContactSource = "apollo" | "manual";
 export type SendStatus = "sent" | "failed";
 export type SequenceStep = 0 | 1 | 2 | 3;
-export type GenerationProvider = "gemini" | "groq";
+export type GenerationProvider = "gemini" | "groq" | "openai";
 
 export interface CampaignRow {
   id: string;

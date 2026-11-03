@@ -52,6 +52,7 @@ const SECRET_ENV_VARS = [
   "MAILGUN_WEBHOOK_SIGNING_KEY",
   "GEMINI_API_KEY",
   "GROQ_API_KEY",
+  "OPENAI_API_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
   "AUTH_PASSWORD",
   "AUTH_SECRET",
@@ -71,6 +72,7 @@ export function redactText(text: string): string {
   return out
     .replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&\s"']+/gi, "$1[REDACTED]")
     .replace(/(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g, "$1 [REDACTED]")
+    .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[REDACTED_JWT]")
     .slice(0, MAX_STRING);
 }

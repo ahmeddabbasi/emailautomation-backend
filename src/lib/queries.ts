@@ -350,7 +350,7 @@ export interface SendListItem {
   body: string | null;
   errorMessage: string | null;
   deliveryFailedAt: string | null;
-  provider: "gemini" | "groq" | null;
+  provider: "gemini" | "groq" | "openai" | null;
   testMode: boolean;
   isTest: boolean;
   createdAt: string;
@@ -415,7 +415,7 @@ export async function listSends(filters: ListSendsFilters = {}): Promise<ListSen
     body: string | null;
     error_message: string | null;
     delivery_failed_at: string | null;
-    provider: "gemini" | "groq" | null;
+    provider: "gemini" | "groq" | "openai" | null;
     test_mode: boolean;
     is_test: boolean;
     test_recipient_email: string | null;

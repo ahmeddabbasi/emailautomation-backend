@@ -51,6 +51,10 @@ export const env = {
   get groqModel() {
     return process.env.GROQ_MODEL || null;
   },
+  // Used only for Testing-page drafts. Campaign generation stays on Gemini and Groq.
+  get openaiModel() {
+    return optional("OPENAI_MODEL", "gpt-4o-mini");
+  },
   get defaultSenderName() {
     return optional("DEFAULT_SENDER_NAME", "");
   },

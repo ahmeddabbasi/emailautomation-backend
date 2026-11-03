@@ -18,6 +18,7 @@ const SERVICE_CODES: Record<ExternalServiceError["service"], string> = {
   gemini: "GEMINI_REQUEST_FAILED",
   groq: "GROQ_REQUEST_FAILED",
   mailgun: "MAILGUN_REQUEST_FAILED",
+  openai: "OPENAI_REQUEST_FAILED",
 };
 
 // Uniform error -> HTTP status mapping so no route ever returns a bare,
