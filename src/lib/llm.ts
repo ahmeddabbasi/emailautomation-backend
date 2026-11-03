@@ -34,9 +34,11 @@ const KIND_CODE: Record<FailureKind, string> = {
   other: "REQUEST_FAILED",
 };
 
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 2;
 const BACKOFF_MS = [1000, 3000];
-const REQUEST_TIMEOUT_MS = 45000;
+// Short enough that one draft (Gemini, one retry, then Groq) returns before
+// the Vercel proxy closes the request at 60 seconds.
+const REQUEST_TIMEOUT_MS = 15000;
 // Once Gemini is rate limited or down, skip it for a while instead of paying
 // three failed attempts per contact for the rest of a batch.
 const GEMINI_COOLDOWN_MS = 5 * 60 * 1000;
@@ -68,7 +70,9 @@ function classify(status: number | undefined, text: string): FailureKind {
   return "other";
 }
 
-const retryable = (kind: FailureKind) => kind === "rate_limit" || kind === "unavailable" || kind === "server_error";
+// A 429 is a quota stop, not a blip. Retrying it burns the gateway timeout.
+// Fall straight through to Groq instead.
+const retryable = (kind: FailureKind) => kind === "unavailable" || kind === "server_error";
 const fallbackEligible = (kind: FailureKind) => kind === "rate_limit" || kind === "unavailable";
 
 function sleep(ms: number) {
