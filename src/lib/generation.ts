@@ -243,7 +243,8 @@ export async function generateEmail(
   };
   const brief = await loadBrief(ctx);
   const raw = await completeEmailJson(buildPrompt(contact, campaign, list, sequenceStep, brief), ctx);
-  return finalize(raw, sender);
+  const body = list.cta_link && !raw.body.includes(list.cta_link) ? `${raw.body.trim()}\n\n${list.cta_link}` : raw.body;
+  return finalize({ ...raw, body }, sender);
 }
 
 const MIN_BODY_LENGTH = 40;
