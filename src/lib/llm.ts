@@ -81,6 +81,16 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Groq's token limit clears in a few seconds. Gemini's does not, so only Groq
+// gets this short wait. Anything longer is left to the fallback path.
+function shortRetryMs(err: ProviderError): number | null {
+  const match = `${err.message} ${err.providerBody ?? ""}`.match(/try again in ([0-9.]+)s/i);
+  if (!match) return null;
+  const ms = Math.ceil(Number(match[1]) * 1000) + 400;
+  if (!Number.isFinite(ms) || ms <= 0 || ms > 8000) return null;
+  return ms;
+}
+
 function parseEmailJson(provider: GenerationProvider, text: string | null | undefined): EmailJson {
   if (!text) throw new ProviderError(provider, "bad_response", "Model returned an empty response");
   let parsed: unknown;
@@ -284,12 +294,13 @@ async function withRetries(
       return await run();
     } catch (err) {
       last = err instanceof ProviderError ? err : new ProviderError(provider, "other", errorMessage(err));
-      const willRetry = attempt < MAX_ATTEMPTS && retryable(last.kind);
+      const pause = provider === "groq" && last.kind === "rate_limit" ? shortRetryMs(last) : null;
+      const willRetry = attempt < MAX_ATTEMPTS && (retryable(last.kind) || pause !== null);
       if (willRetry) {
         await logWarning("generation", `${provider.toUpperCase()}_${KIND_CODE[last.kind]}`, `${PROVIDER_NAME[provider]} request failed, retrying: ${last.message}`, {
           details: failureDetails(last, ctx, attempt, MAX_ATTEMPTS),
         });
-        await sleep(BACKOFF_MS[attempt - 1] ?? 3000);
+        await sleep(pause ?? BACKOFF_MS[attempt - 1] ?? 3000);
         continue;
       }
       throw Object.assign(last, { attempt });
