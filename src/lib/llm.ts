@@ -1,6 +1,7 @@
 import "server-only";
 import { GoogleGenAI, Type } from "@google/genai";
 import { env } from "@/lib/env";
+import { resolveGeminiApiKey } from "@/lib/gemini-settings";
 import { ExternalServiceError, alreadyLogged, errorMessage } from "@/lib/errors";
 import { logError, logWarning } from "@/lib/logger";
 import type { GenerationProvider } from "@/lib/supabase/db-types";
@@ -39,7 +40,11 @@ const REQUEST_TIMEOUT_MS = 45000;
 // Once Gemini is rate limited or down, skip it for a while instead of paying
 // three failed attempts per contact for the rest of a batch.
 const GEMINI_COOLDOWN_MS = 5 * 60 * 1000;
+// Free tier for the pinned Gemini model allows 5 generateContent calls a minute.
+export const GEMINI_REQUESTS_PER_MINUTE = 5;
 let geminiCooldownUntil = 0;
+let geminiRequestTimes: number[] = [];
+let quotaWarnedAt = 0;
 
 class ProviderError extends Error {
   constructor(
@@ -86,11 +91,57 @@ function parseEmailJson(provider: GenerationProvider, text: string | null | unde
 }
 
 let geminiClient: GoogleGenAI | null = null;
+let geminiClientKey = "";
+
+export function resetGeminiClient(): void {
+  geminiClient = null;
+  geminiClientKey = "";
+}
+
+export function resumeGemini(): void {
+  geminiCooldownUntil = 0;
+}
+
+const groqConfigured = () => Boolean(env.groqApiKey && env.groqModel);
+
+export function geminiRuntimeStatus() {
+  const now = Date.now();
+  const quotaUsed = geminiRequestTimes.filter((time) => now - time < 60_000).length;
+  const coolingDown = now < geminiCooldownUntil;
+  return {
+    model: env.geminiModel,
+    quotaUsed,
+    quotaLimit: GEMINI_REQUESTS_PER_MINUTE,
+    activeProvider: coolingDown && groqConfigured() ? ("groq" as const) : ("gemini" as const),
+    cooldownUntil: coolingDown ? new Date(geminiCooldownUntil).toISOString() : null,
+    groqConfigured: groqConfigured(),
+    groqModel: env.groqModel,
+  };
+}
+
+async function recordGeminiRequest(): Promise<void> {
+  const now = Date.now();
+  geminiRequestTimes = geminiRequestTimes.filter((time) => now - time < 60_000);
+  geminiRequestTimes.push(now);
+  if (geminiRequestTimes.length === GEMINI_REQUESTS_PER_MINUTE - 1 && now - quotaWarnedAt > 60_000) {
+    quotaWarnedAt = now;
+    await logWarning(
+      "generation",
+      "GEMINI_QUOTA_LOW",
+      `Gemini is about to hit its free limit: ${geminiRequestTimes.length} of ${GEMINI_REQUESTS_PER_MINUTE} requests in the last minute. One more limit switches writing to Groq.`,
+      { details: { quotaUsed: geminiRequestTimes.length, quotaLimit: GEMINI_REQUESTS_PER_MINUTE, model: env.geminiModel } }
+    );
+  }
+}
 
 async function callGemini(prompt: string, mode: "email" | "text"): Promise<string> {
-  if (!geminiClient) {
-    geminiClient = new GoogleGenAI({ apiKey: env.geminiApiKey, httpOptions: { timeout: REQUEST_TIMEOUT_MS } });
+  const apiKey = await resolveGeminiApiKey();
+  if (!apiKey) throw new ProviderError("gemini", "auth", "Gemini API key is not configured");
+  if (!geminiClient || geminiClientKey !== apiKey) {
+    geminiClient = new GoogleGenAI({ apiKey, httpOptions: { timeout: REQUEST_TIMEOUT_MS } });
+    geminiClientKey = apiKey;
   }
+  await recordGeminiRequest();
   try {
     const response = await geminiClient.models.generateContent({
       model: env.geminiModel,
@@ -205,8 +256,6 @@ async function withRetries(
   throw last;
 }
 
-const groqConfigured = () => Boolean(env.groqApiKey && env.groqModel);
-
 async function complete(prompt: string, mode: "email" | "text", ctx: LlmContext): Promise<{ text: string; provider: GenerationProvider }> {
   const geminiCoolingDown = Date.now() < geminiCooldownUntil;
 
@@ -248,9 +297,12 @@ async function complete(prompt: string, mode: "email" | "text", ctx: LlmContext)
     throw alreadyLogged(new ExternalServiceError("gemini", `Gemini request failed: ${geminiErr.message}`, geminiErr));
   }
 
-  await logWarning("generation", "GENERATION_FALLBACK_TO_GROQ", `Gemini ${geminiErr.kind === "rate_limit" ? "is rate limited" : "is unavailable"}; switching to Groq for the next ${GEMINI_COOLDOWN_MS / 60000} minutes`, {
-    details: geminiDetails,
-  });
+  await logWarning(
+    "generation",
+    "GENERATION_FALLBACK_TO_GROQ",
+    `Gemini ${geminiErr.kind === "rate_limit" ? "hit its quota" : "is unavailable"}. Writing has switched to Groq${env.groqModel ? ` (${env.groqModel})` : ""} for the next ${GEMINI_COOLDOWN_MS / 60000} minutes.`,
+    { details: geminiDetails }
+  );
 
   try {
     return { text: await withRetries("groq", () => callGroq(prompt, mode), ctx), provider: "groq" };
@@ -289,4 +341,18 @@ export async function completeEmailJson(prompt: string, ctx: LlmContext): Promis
 
 export async function completeText(prompt: string, ctx: LlmContext): Promise<{ text: string; provider: GenerationProvider }> {
   return complete(prompt, "text", ctx);
+}
+
+export async function testGeminiKey(apiKey: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 20000 } });
+    const response = await ai.models.generateContent({
+      model: env.geminiModel,
+      contents: "Reply with the single word ok.",
+    });
+    if (!response.text?.trim()) return { ok: false, message: "Gemini returned an empty response" };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: errorMessage(err).slice(0, 300) };
+  }
 }
