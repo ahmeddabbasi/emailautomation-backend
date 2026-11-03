@@ -214,12 +214,17 @@ export async function buildGuide(): Promise<GuidePayload> {
     },
   ];
 
-  const nowIndex = firstOpen === -1 ? all.length - 1 : firstOpen;
-  const steps: GuideStep[] = all.map((step, index) => ({
-    ...step,
-    state: index < nowIndex ? "done" : index === nowIndex ? "now" : "later",
-  }));
-  const current = steps[nowIndex];
+  const steps: GuideStep[] = [
+    ...draft.map((step, index) => ({
+      ...step,
+      state: (checks[index] ? "done" : index === firstOpen ? "now" : "later") as GuideStep["state"],
+    })),
+    {
+      ...all[all.length - 1],
+      state: (firstOpen === -1 ? "now" : "later") as GuideStep["state"],
+    },
+  ];
+  const current = steps.find((step) => step.state === "now") ?? steps[steps.length - 1];
 
   const tips: GuideTip[] = [
     {
