@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processGenerationBatch } from "@/lib/bulk-generation";
-import { handleRouteError } from "@/lib/api-helpers";
+import { handleRouteError, jsonError } from "@/lib/api-helpers";
 
 // Processes one small batch of ungenerated initial drafts for this list and
 // returns real, persisted progress. The client calls this repeatedly until
@@ -16,6 +16,9 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     const result = await processGenerationBatch(id, 1);
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof Error && err.message === "Attach this list to a campaign before generating.") {
+      return jsonError(400, err.message);
+    }
     return handleRouteError(err, "generation");
   }
 }

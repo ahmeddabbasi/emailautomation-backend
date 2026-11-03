@@ -30,12 +30,16 @@ export async function processGenerationBatch(
 
   const { data: listRow, error: listErr } = await db
     .from("lead_lists")
-    .select("*, campaigns!inner(*)")
+    .select("*, campaigns(*)")
     .eq("id", leadListId)
-    .single();
-  if (listErr || !listRow) throw new Error(`Lead list ${leadListId} not found`);
+    .maybeSingle();
+  if (listErr) throw new Error(`Failed to load lead list: ${errorMessage(listErr)}`);
+  if (!listRow) throw new Error(`Lead list ${leadListId} not found`);
 
-  const { campaigns: campaign, ...list } = listRow as unknown as LeadListRow & { campaigns: CampaignRow };
+  const joined = listRow as unknown as LeadListRow & { campaigns: CampaignRow | CampaignRow[] | null };
+  const { campaigns: campaignRelation, ...list } = joined;
+  const campaign = Array.isArray(campaignRelation) ? campaignRelation[0] : campaignRelation;
+  if (!campaign) throw new Error("Attach this list to a campaign before generating.");
 
   if (list.generation_status === "pending") {
     await db.from("lead_lists").update({ generation_status: "running" }).eq("id", leadListId);
@@ -149,7 +153,7 @@ export async function processStalledGeneration(maxLists = 3, batchSize = 5): Pro
   const db = supabaseAdmin();
   const { data: lists, error } = await db
     .from("lead_lists")
-    .select("id")
+    .select("id, campaign_id")
     .in("generation_status", ["pending", "running"])
     .limit(maxLists);
   if (error) {
@@ -157,14 +161,39 @@ export async function processStalledGeneration(maxLists = 3, batchSize = 5): Pro
     return;
   }
 
-  for (const { id } of lists ?? []) {
+  for (const list of lists ?? []) {
+    // A list with no campaign cannot be drafted. Leave it completed so the
+    // next tick does not report the same missing-list failure again.
+    if (!list.campaign_id) {
+      await finishUnattachedList(list.id);
+      continue;
+    }
     try {
-      await processGenerationBatch(id, batchSize);
+      await processGenerationBatch(list.id, batchSize);
     } catch (err) {
+      if (unattachedList(err)) {
+        await finishUnattachedList(list.id);
+        continue;
+      }
       await logError("generation", "BACKGROUND_GENERATION_FAILED", `Background generation batch failed: ${errorMessage(err)}`, {
         error: err,
-        details: { leadListId: id },
+        details: { leadListId: list.id },
       });
     }
+  }
+}
+
+function unattachedList(err: unknown): boolean {
+  const message = errorMessage(err);
+  return /not found/i.test(message) || message === "Attach this list to a campaign before generating.";
+}
+
+async function finishUnattachedList(id: string): Promise<void> {
+  const { error } = await supabaseAdmin().from("lead_lists").update({ generation_status: "completed" }).eq("id", id);
+  if (error) {
+    await logError("generation", "DB_QUERY_FAILED", `Failed to stop generation for a list with no campaign: ${errorMessage(error)}`, {
+      error,
+      details: { leadListId: id },
+    });
   }
 }
