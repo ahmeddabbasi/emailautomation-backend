@@ -63,7 +63,7 @@ function listHref(campaignId: string, listId: string): string {
 export async function buildGuide(): Promise<GuidePayload> {
   const db = supabaseAdmin();
   const [mailboxResult, settingsResult, knowledge, campaignResult, staleDrafts] = await Promise.all([
-    db.from("mailboxes").select("id, display_name, email, status, campaign_id, last_error"),
+    db.from("mailboxes").select("id, display_name, email, status, last_error, campaign_mailboxes(campaign_id)"),
     db.from("app_settings").select("default_cta_link").eq("id", true).maybeSingle(),
     getKnowledgeOverview(),
     db
@@ -83,7 +83,11 @@ export async function buildGuide(): Promise<GuidePayload> {
   const campaigns = (campaignResult.data ?? []) as unknown as CampaignRow[];
   const lists = campaigns.flatMap((campaign) => (campaign.lead_lists ?? []).map((list) => ({ campaign, list })));
   const activeMailboxes = mailboxes.filter((mailbox) => mailbox.status === "active");
-  const linked = activeMailboxes.filter((mailbox) => mailbox.campaign_id);
+  const linked = activeMailboxes.filter((mailbox) => {
+    const link = mailbox.campaign_mailboxes as { campaign_id: string }[] | { campaign_id: string } | null;
+    const row = Array.isArray(link) ? link[0] : link;
+    return Boolean(row?.campaign_id);
+  });
   const defaultLink = settingsResult.data?.default_cta_link ?? "";
   const staleListIds = new Set((staleDrafts.data ?? []).map((row) => row.lead_list_id as string));
   const badLists = lists.filter(({ list }) => isPlaceholderLink(list.cta_link) || staleListIds.has(list.id));
