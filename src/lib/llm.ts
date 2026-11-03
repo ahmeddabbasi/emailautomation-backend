@@ -176,46 +176,82 @@ async function callGemini(prompt: string, mode: "email" | "text"): Promise<strin
 const GROQ_JSON_INSTRUCTION =
   'Respond with only a JSON object of the form {"subject": "...", "body": "..."} and nothing else.';
 
-async function callGroq(prompt: string, mode: "email" | "text"): Promise<string> {
-  const apiKey = env.groqApiKey;
-  const model = env.groqModel;
-  if (!apiKey || !model) throw new ProviderError("groq", "other", "Groq is not configured");
+const GROQ_EMAIL_FORMAT = {
+  type: "json_schema",
+  json_schema: {
+    name: "outreach_email",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: { subject: { type: "string" }, body: { type: "string" } },
+      required: ["subject", "body"],
+      additionalProperties: false,
+    },
+  },
+};
 
+function groqMessageText(message: { content?: string | null; reasoning?: string | null } | undefined): string | undefined {
+  const content = message?.content?.trim();
+  if (content) return content;
+  const reasoning = message?.reasoning?.trim();
+  if (!reasoning) return undefined;
+  const start = reasoning.indexOf("{");
+  const end = reasoning.lastIndexOf("}");
+  if (start >= 0 && end > start) return reasoning.slice(start, end + 1);
+  return undefined;
+}
+
+async function postGroq(apiKey: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; raw: string; text?: string }> {
   let res: Response;
   try {
     res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        temperature: mode === "email" ? 0.8 : 0.3,
-        messages:
-          mode === "email"
-            ? [
-                { role: "system", content: GROQ_JSON_INSTRUCTION },
-                { role: "user", content: prompt },
-              ]
-            : [{ role: "user", content: prompt }],
-        ...(mode === "email" ? { response_format: { type: "json_object" } } : {}),
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (err) {
     throw new ProviderError("groq", "unavailable", `Groq could not be reached: ${errorMessage(err)}`);
   }
-
   const raw = await res.text();
-  if (!res.ok) {
-    throw new ProviderError("groq", classify(res.status, raw), `Groq returned HTTP ${res.status}`, res.status, raw.slice(0, 1000));
-  }
-  let content: string | undefined;
+  if (!res.ok) return { ok: false, status: res.status, raw };
+  let text: string | undefined;
   try {
-    content = (JSON.parse(raw) as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content;
+    text = groqMessageText((JSON.parse(raw) as { choices?: { message?: { content?: string | null; reasoning?: string | null } }[] }).choices?.[0]?.message);
   } catch {
     throw new ProviderError("groq", "bad_response", "Groq response was not valid JSON", res.status, raw.slice(0, 500));
   }
-  if (!content) throw new ProviderError("groq", "bad_response", "Groq returned an empty response", res.status, raw.slice(0, 500));
-  return content;
+  return { ok: true, status: res.status, raw, text };
+}
+
+async function callGroq(prompt: string, mode: "email" | "text"): Promise<string> {
+  const apiKey = env.groqApiKey;
+  const model = env.groqModel;
+  if (!apiKey || !model) throw new ProviderError("groq", "other", "Groq is not configured");
+
+  // gpt-oss spends its token budget on hidden reasoning first. The default
+  // effort leaves content empty, and Groq then rejects the call as invalid JSON.
+  const reasoning = /gpt-oss/i.test(model) ? { reasoning_effort: "low" } : {};
+  const messages =
+    mode === "email"
+      ? [
+          { role: "system", content: GROQ_JSON_INSTRUCTION },
+          { role: "user", content: prompt },
+        ]
+      : [{ role: "user", content: prompt }];
+  const base = { model, temperature: mode === "email" ? 0.8 : 0.3, max_completion_tokens: 4096, ...reasoning, messages };
+
+  const first = await postGroq(apiKey, mode === "email" ? { ...base, response_format: GROQ_EMAIL_FORMAT } : base);
+  const result =
+    first.ok || mode !== "email" || first.status !== 400
+      ? first
+      : await postGroq(apiKey, base);
+
+  if (!result.ok) {
+    throw new ProviderError("groq", classify(result.status, result.raw), `Groq returned HTTP ${result.status}`, result.status, result.raw.slice(0, 1000));
+  }
+  if (!result.text) throw new ProviderError("groq", "bad_response", "Groq returned an empty response", result.status, result.raw.slice(0, 500));
+  return result.text;
 }
 
 function failureDetails(err: ProviderError, ctx: LlmContext, attempt: number, maxAttempts: number) {
