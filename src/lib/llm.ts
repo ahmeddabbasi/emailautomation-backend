@@ -22,11 +22,12 @@ export interface LlmContext {
   sequenceStep?: number;
 }
 
-type FailureKind = "rate_limit" | "unavailable" | "server_error" | "auth" | "bad_request" | "bad_response" | "other";
+type FailureKind = "rate_limit" | "unavailable" | "deadline" | "server_error" | "auth" | "bad_request" | "bad_response" | "other";
 
 const KIND_CODE: Record<FailureKind, string> = {
   rate_limit: "RATE_LIMIT",
   unavailable: "UNAVAILABLE",
+  deadline: "DEADLINE",
   server_error: "SERVER_ERROR",
   auth: "AUTH_FAILED",
   bad_request: "BAD_REQUEST",
@@ -63,6 +64,7 @@ class ProviderError extends Error {
 
 function classify(status: number | undefined, text: string): FailureKind {
   if (status === 429 || /RESOURCE_EXHAUSTED|rate.?limit|quota/i.test(text)) return "rate_limit";
+  if (status === 504 || /DEADLINE_EXCEEDED|Deadline expired/i.test(text)) return "deadline";
   if (status === 503 || /UNAVAILABLE|overloaded|high demand/i.test(text)) return "unavailable";
   if (status === 401 || status === 403 || /API_KEY_INVALID|PERMISSION_DENIED|invalid api key/i.test(text)) return "auth";
   if (status !== undefined && status >= 500) return "server_error";
@@ -70,10 +72,10 @@ function classify(status: number | undefined, text: string): FailureKind {
   return "other";
 }
 
-// A 429 is a quota stop, not a blip. Retrying it burns the gateway timeout.
-// Fall straight through to Groq instead.
+// A quota stop or a provider deadline will not succeed on an immediate retry,
+// and those retries are what pushed the browser request past the proxy limit.
 const retryable = (kind: FailureKind) => kind === "unavailable" || kind === "server_error";
-const fallbackEligible = (kind: FailureKind) => kind === "rate_limit" || kind === "unavailable";
+const fallbackEligible = (kind: FailureKind) => kind === "rate_limit" || kind === "unavailable" || kind === "deadline";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -340,7 +342,7 @@ async function complete(prompt: string, mode: "email" | "text", ctx: LlmContext)
   await logWarning(
     "generation",
     "GENERATION_FALLBACK_TO_GROQ",
-    `Gemini ${geminiErr.kind === "rate_limit" ? "hit its quota" : "is unavailable"}. Writing has switched to Groq${env.groqModel ? ` (${env.groqModel})` : ""} for the next ${GEMINI_COOLDOWN_MS / 60000} minutes.`,
+    `Gemini ${geminiErr.kind === "rate_limit" ? "hit its quota" : geminiErr.kind === "deadline" ? "timed out" : "is unavailable"}. Writing has switched to Groq${env.groqModel ? ` (${env.groqModel})` : ""} for the next ${GEMINI_COOLDOWN_MS / 60000} minutes.`,
     { details: geminiDetails }
   );
 
