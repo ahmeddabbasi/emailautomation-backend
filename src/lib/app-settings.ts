@@ -1,6 +1,7 @@
 import "server-only";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { ExternalServiceError, errorMessage } from "@/lib/errors";
+import { cleanCtaLink } from "@/lib/links";
 
 export interface AppDefaults {
   ctaLink: string;
@@ -22,7 +23,7 @@ export async function saveAppDefaults(defaults: AppDefaults): Promise<void> {
     .from("app_settings")
     .upsert({
       id: true,
-      default_cta_link: defaults.ctaLink,
+      default_cta_link: cleanCtaLink(defaults.ctaLink),
       default_early_bird_line: defaults.earlyBirdLine,
       updated_at: new Date().toISOString(),
     });

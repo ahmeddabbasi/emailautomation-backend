@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCampaignById, listLeadLists, createLeadList } from "@/lib/queries";
+import { cleanCtaLink } from "@/lib/links";
 import { jsonError, handleRouteError } from "@/lib/api-helpers";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return jsonError(400, "Window end must be after window start");
     }
 
-    const leadList = await createLeadList(id, parsed.data);
+    const leadList = await createLeadList(id, { ...parsed.data, ctaLink: cleanCtaLink(parsed.data.ctaLink) });
     return NextResponse.json({ leadList }, { status: 201 });
   } catch (err) {
     return handleRouteError(err);

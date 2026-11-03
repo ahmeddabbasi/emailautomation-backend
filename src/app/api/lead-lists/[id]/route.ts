@@ -4,6 +4,7 @@ import { getLeadListById, updateLeadList } from "@/lib/queries";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { jsonError, handleRouteError } from "@/lib/api-helpers";
 import { rescheduleFollowups } from "@/lib/dispatch";
+import { cleanCtaLink } from "@/lib/links";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -63,7 +64,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       const { error } = await supabaseAdmin().from("lead_lists").update({ campaign_id: parsed.data.campaignId }).eq("id", id);
       if (error) return jsonError(400, "Could not update the campaign link");
     }
-    const { campaignId: _ignored, ...rest } = parsed.data;
+    const { campaignId: _ignored, ...fields } = parsed.data;
+    const rest = fields.ctaLink === undefined ? fields : { ...fields, ctaLink: cleanCtaLink(fields.ctaLink) };
     const hasOtherFields = Object.values(rest).some((value) => value !== undefined);
     const leadList = hasOtherFields ? await updateLeadList(id, rest) : await getLeadListById(id);
     if (!leadList) return jsonError(404, "Lead list not found");
